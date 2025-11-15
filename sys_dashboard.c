@@ -166,151 +166,99 @@ void enabled_color(const char *s, char *buf, size_t bufsize) {
 char *detect_scope(const char *svc) {
     static char scope_buf[16];
     char cmd[MAX_LINE];
+    char out[MAX_LINE];
 
-    snprintf(cmd, sizeof(cmd), "systemctl status \"%s\" >/dev/null 2>&1", svc);
-    if (exec_simple(cmd) == 0) {
+    out[0] = '\0';
+
+    /* ==========================
+       1) System-Scope testen
+       ========================== */
+    snprintf(cmd, sizeof(cmd),
+             "systemctl list-unit-files --type=service \"%s\" 2>/dev/null",
+             svc);
+    execute_cmd(cmd, out, sizeof(out));
+
+    // Wenn der Servicename in der Ausgabe vorkommt, zählen wir ihn als System-Unit
+    if (strstr(out, svc) != NULL) {
         strcpy(scope_buf, "system");
         return scope_buf;
     }
-    snprintf(cmd, sizeof(cmd), "systemctl --user status \"%s\" >/dev/null 2>&1", svc);
-    if (exec_simple(cmd) == 0) {
+
+    /* ==========================
+       2) User-Scope testen
+       ========================== */
+    out[0] = '\0';
+    snprintf(cmd, sizeof(cmd),
+             "systemctl --user list-unit-files --type=service \"%s\" 2>/dev/null",
+             svc);
+    execute_cmd(cmd, out, sizeof(out));
+
+    if (strstr(out, svc) != NULL) {
         strcpy(scope_buf, "user");
         return scope_buf;
     }
+
+    /* ==========================
+       3) Weder system noch user
+       ========================== */
     strcpy(scope_buf, "none");
     return scope_buf;
 }
 
-// Port-Erkennung: zuerst ExecStart/Env, dann netstat mit PID
 char *guess_port(const char *svc, const char *scope) {
     static char port_buf[16];
     strcpy(port_buf, "-");
 
-    if (strcmp(scope, "none") == 0) return port_buf;
+    // Wenn Service nicht gefunden → kein Port
+    if (strcmp(scope, "none") == 0) {
+        return port_buf;
+    }
 
     const char *user_flag = (strcmp(scope, "system") == 0 ? "" : "--user");
+
+    // 1) MainPID vom Service holen
     char cmd[MAX_LINE];
-    char exec_out[MAX_LINE] = {0};
-    char env_out[MAX_LINE]  = {0};
-
-    // ExecStart auslesen
-    snprintf(cmd, sizeof(cmd),
-             "systemctl %s show -p ExecStart --value \"%s\" 2>/dev/null",
-             user_flag, svc);
-    execute_cmd(cmd, exec_out, sizeof(exec_out));
-
-    // Environment auslesen
-    snprintf(cmd, sizeof(cmd),
-             "systemctl %s show -p Environment --value \"%s\" 2>/dev/null",
-             user_flag, svc);
-    execute_cmd(cmd, env_out, sizeof(env_out));
-
-    // Quotes entfernen
-    char *q = strchr(exec_out, '"');
-    while (q) {
-        memmove(q, q + 1, strlen(q));
-        q = strchr(q, '"');
-    }
-
-    // 1) --port= / --port
-    char *p = strstr(exec_out, "--port=");
-    if (!p) p = strstr(exec_out, "--port ");
-    if (p) {
-        if (strstr(p, "--port="))
-            p = strchr(p, '=') + 1;
-        else
-            p = strstr(p, "port ") + 5;
-        while (*p == ' ') p++;
-        char *end = p;
-        while (isdigit((unsigned char)*end)) end++;
-        int len = end - p;
-        if (len > 0 && len < 6) {
-            strncpy(port_buf, p, len);
-            port_buf[len] = '\0';
-            return port_buf;
-        }
-    }
-
-    // 2) -p <port>
-    p = strstr(exec_out, "-p ");
-    if (p) {
-        p += 2;
-        while (*p == ' ') p++;
-        char *end = p;
-        while (isdigit((unsigned char)*end)) end++;
-        int len = end - p;
-        if (len > 0 && len < 6) {
-            strncpy(port_buf, p, len);
-            port_buf[len] = '\0';
-            return port_buf;
-        }
-    }
-
-    // 3) letzte :<digits>
-    p = strrchr(exec_out, ':');
-    if (p && isdigit((unsigned char)*(p + 1))) {
-        p++;
-        char *end = p;
-        while (isdigit((unsigned char)*end)) end++;
-        int len = end - p;
-        if (len > 0 && len < 6) {
-            strncpy(port_buf, p, len);
-            port_buf[len] = '\0';
-            return port_buf;
-        }
-    }
-
-    // 4) Environment=...PORT=xxxx...
-    p = strstr(env_out, "PORT=");
-    if (p) {
-        p += 5;
-        char *end = p;
-        while (isdigit((unsigned char)*end)) end++;
-        int len = end - p;
-        if (len > 0 && len < 6) {
-            strncpy(port_buf, p, len);
-            port_buf[len] = '\0';
-            return port_buf;
-        }
-    }
-
-    // 5) Fallback: netstat -tulnp + PID
     char pid_str[32] = {0};
+
     snprintf(cmd, sizeof(cmd),
              "systemctl %s show -p MainPID --value \"%s\" 2>/dev/null",
              user_flag, svc);
-    if (execute_cmd(cmd, pid_str, sizeof(pid_str)) == 0 && strlen(pid_str) > 0) {
-        long pid = atol(pid_str);
-        if (pid > 0) {
-            char ns_out[MAX_LINE * 10] = {0};
-            // entspricht deinem Beispiel: netstat ... | grep 52405
-            snprintf(cmd, sizeof(cmd),
-                     "netstat -tulnp 2>/dev/null | grep ' %ld/'", pid);
-            if (execute_cmd(cmd, ns_out, sizeof(ns_out)) == 0 &&
-                strlen(ns_out) > 0) {
+    if (execute_cmd(cmd, pid_str, sizeof(pid_str)) != 0) {
+        return port_buf;
+    }
 
-                // Suche nach ":" gefolgt von Ziffern → das ist der Port
-                char *pp = strchr(ns_out, ':');
-                while (pp) {
-                    if (isdigit((unsigned char)*(pp + 1))) {
-                        pp++;
-                        char *end = pp;
-                        while (isdigit((unsigned char)*end)) end++;
-                        int len = end - pp;
-                        if (len > 0 && len < 6) {
-                            strncpy(port_buf, pp, len);
-                            port_buf[len] = '\0';
-                            return port_buf;
-                        }
-                    }
-                    pp = strchr(pp + 1, ':');
-                }
+    long pid = atol(pid_str);
+    if (pid <= 0) {
+        return port_buf;
+    }
+
+    // 2) Port über netstat + awk ermitteln, exakt wie bei dir in der Shell
+    //
+    // netstat -tulnp | awk '$0 ~ "PID/" {split($4,a,":"); print a[length(a)]; exit}'
+    //
+    char net_out[64] = {0};
+    snprintf(cmd, sizeof(cmd),
+             "netstat -tulnp 2>/dev/null | "
+             "awk '$0 ~ \"%ld/\" {split($4,a,\":\"); print a[length(a)]; exit}'",
+             pid);
+
+    if (execute_cmd(cmd, net_out, sizeof(net_out)) == 0 && strlen(net_out) > 0) {
+        // Sicherheitshalber prüfen, ob das Ergebnis nur aus Ziffern besteht
+        int ok = 1;
+        for (size_t i = 0; i < strlen(net_out); i++) {
+            if (!isdigit((unsigned char)net_out[i])) {
+                ok = 0;
+                break;
             }
+        }
+        if (ok && strlen(net_out) < sizeof(port_buf)) {
+            strcpy(port_buf, net_out);
         }
     }
 
     return port_buf;
 }
+
 
 // --------------------------------------------------
 // Service-Summary
@@ -352,43 +300,40 @@ void get_service_summary(const char *svc, char *summary, size_t bufsize) {
 // --------------------------------------------------
 // Alle Services einsammeln (System + User)
 // --------------------------------------------------
-
 void build_all_services_list(const char *home) {
     num_all_services = 0;
 
-    // /etc/systemd/system
+    // System services from /etc/systemd/system/*.service
     DIR *dir = opendir("/etc/systemd/system");
     if (dir) {
         struct dirent *entry;
         while ((entry = readdir(dir)) != NULL && num_all_services < MAX_SERVICES) {
-            if (entry->d_type == DT_REG &&
-                strstr(entry->d_name, ".service") != NULL) {
-                strncpy(all_services[num_all_services++], entry->d_name, MAX_LINE-1);
-                all_services[num_all_services-1][MAX_LINE-1] = '\0';
+            // nur Einträge mit ".service" im Namen
+            if (strstr(entry->d_name, ".service") != NULL) {
+                strcpy(all_services[num_all_services++], entry->d_name);
             }
         }
         closedir(dir);
     }
 
-    // ~/.config/systemd/user
+    // User services from ~/.config/systemd/user/*.service
     char user_dir[MAX_LINE];
     snprintf(user_dir, sizeof(user_dir), "%s/.config/systemd/user", home);
     dir = opendir(user_dir);
     if (dir) {
         struct dirent *entry;
         while ((entry = readdir(dir)) != NULL && num_all_services < MAX_SERVICES) {
-            if (entry->d_type == DT_REG &&
-                strstr(entry->d_name, ".service") != NULL) {
+            if (strstr(entry->d_name, ".service") != NULL) {
+                // Check if already added (user services might overlap)
                 int exists = 0;
-                for (int i = 0; i < num_all_services; ++i) {
+                for (int i = 0; i < num_all_services; i++) {
                     if (strcmp(all_services[i], entry->d_name) == 0) {
                         exists = 1;
                         break;
                     }
                 }
                 if (!exists) {
-                    strncpy(all_services[num_all_services++], entry->d_name, MAX_LINE-1);
-                    all_services[num_all_services-1][MAX_LINE-1] = '\0';
+                    strcpy(all_services[num_all_services++], entry->d_name);
                 }
             }
         }
@@ -507,43 +452,84 @@ void remove_service_interactive(const char *home) {
     printf("%sService entfernt:%s %s\n", OK_COLOR, RESET_COLOR, removed);
     press_enter();
 }
-
-// --------------------------------------------------
-// ncurses-Hauptloop – nur noch Key-Events
-// --------------------------------------------------
-
 void main_loop(const char *home) {
-    int selected = 0;
+    init_ui();
+
+    int selected = 0;        // Index des ausgewählten Services
+    int focus_on_list = 1;   // 1 = Fokus auf Liste
+
+    // Gleich beim Start einmal zeichnen
+    render_dashboard_ui(selected, focus_on_list);
 
     while (1) {
-        if (num_my_services <= 0)
-            selected = -1;
-        else if (selected >= num_my_services)
-            selected = num_my_services - 1;
 
-        render_dashboard_ui(selected, 1);
+        if (num_my_services <= 0) {
+            selected = 0;
+        } else if (selected >= num_my_services) {
+            selected = num_my_services - 1;
+        }
+
+        // Taste lesen NACHDEM die UI gezeichnet wurde
         int ch = getch();
 
+        // Beenden
         if (ch == 'q' || ch == 'Q') {
-            // zurück nach main
-            return;
-        } else if (ch == KEY_UP) {
+            end_ui();
+            printf("\n%sBye%s\n", DIM_COLOR, RESET_COLOR);
+            exit(0);
+        }
+        // Fokus wechseln (Tab)
+        else if (ch == '\t') {
+            focus_on_list = !focus_on_list;
+        }
+        // Navigation in der Liste
+        else if (focus_on_list && num_my_services > 0 && (ch == KEY_UP || ch == 'k')) {
             if (selected > 0) selected--;
-        } else if (ch == KEY_DOWN) {
+            else selected = num_my_services - 1;
+        }
+        else if (focus_on_list && num_my_services > 0 && (ch == KEY_DOWN || ch == 'j')) {
             if (selected < num_my_services - 1) selected++;
-        } else if (ch == 10 || ch == KEY_ENTER) {
-            if (selected >= 0 && selected < num_my_services) {
-                service_detail_page_ui(my_services[selected]);
-            }
-        } else if (ch == 'a' || ch == 'A') {
+            else selected = 0;
+        }
+        // Enter → Detailseite
+        else if ((ch == '\n' || ch == KEY_ENTER) && focus_on_list && num_my_services > 0) {
+            service_detail_page_ui(my_services[selected]);
+        }
+        // a → Service hinzufügen
+        else if (ch == 'a' || ch == 'A') {
             add_service_ui(home);
-        } else if (ch == 'r') {
+        }
+        // r → Service entfernen
+        else if (ch == 'r') {
             remove_service_ui(home);
-        } else if (ch == 'R') {
-            load_services(home);   // Config neu laden
-        } else if (ch == 'b' || ch == 'B') {
+        }
+        // R → Config neu laden
+        else if (ch == 'R') {
+            load_services(home);
+        }
+        // B → Alle Services browsen
+        else if (ch == 'B' || ch == 'b') {
             browse_all_services_ui(home);
         }
+        // o → Browser direkt aus Dashboard
+        else if (ch == 'o' || ch == 'O') {
+            if (focus_on_list && num_my_services > 0) {
+                const char *svc = my_services[selected];
+                char *scope = detect_scope(svc);
+                char *port  = guess_port(svc, scope);
+
+                if (port && strcmp(port, "-") != 0 && strlen(port) > 0) {
+                    open_in_browser(port);
+                } else {
+                    show_message_ui("Kein Port erkannt oder Service lauscht nicht.");
+                }
+            } else {
+                show_message_ui("Kein Service ausgewählt.");
+            }
+        }
+
+        // nach Änderung wieder neu zeichnen
+        render_dashboard_ui(selected, focus_on_list);
     }
 }
 
