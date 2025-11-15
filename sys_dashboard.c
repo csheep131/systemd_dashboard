@@ -232,7 +232,7 @@ char *guess_port(const char *svc, const char *scope) {
         return port_buf;
     }
 
-    // 2) Port über netstat + awk ermitteln, exakt wie bei dir in der Shell
+
     //
     // netstat -tulnp | awk '$0 ~ "PID/" {split($4,a,":"); print a[length(a)]; exit}'
     //
