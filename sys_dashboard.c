@@ -206,7 +206,7 @@ char *guess_port(const char *svc, const char *scope) {
     char exec_out[MAX_LINE] = {0};
     char env_out[MAX_LINE]  = {0};
 
-    // 1) ExecStart & Environment durchsuchen
+    // 1) ExecStart & Environment durchsuchen (statischer Guess)
     snprintf(cmd, sizeof(cmd),
              "systemctl %s show -p ExecStart --value \"%s\" 2>/dev/null",
              user_flag, svc);
@@ -240,7 +240,7 @@ char *guess_port(const char *svc, const char *scope) {
         if (len > 0 && len < 6) {
             strncpy(port_buf, p, len);
             port_buf[len] = '\0';
-            return port_buf;
+            // KEIN return hier – netstat/ss darf das noch überschreiben
         }
     }
 
@@ -255,7 +255,6 @@ char *guess_port(const char *svc, const char *scope) {
         if (len > 0 && len < 6) {
             strncpy(port_buf, p, len);
             port_buf[len] = '\0';
-            return port_buf;
         }
     }
 
@@ -269,7 +268,6 @@ char *guess_port(const char *svc, const char *scope) {
         if (len > 0 && len < 6) {
             strncpy(port_buf, p, len);
             port_buf[len] = '\0';
-            return port_buf;
         }
     }
 
@@ -283,59 +281,55 @@ char *guess_port(const char *svc, const char *scope) {
         if (len > 0 && len < 6) {
             strncpy(port_buf, p, len);
             port_buf[len] = '\0';
-            return port_buf;
         }
     }
 
-    // 2) Fallback: MainPID holen, dann mit netstat nach Ports suchen
+    // 2) Fallback / Override: MainPID holen, dann mit netstat/ss Ports ermitteln
     char pid_str[32] = {0};
     snprintf(cmd, sizeof(cmd),
              "systemctl %s show -p MainPID --value \"%s\" 2>/dev/null",
              user_flag, svc);
-    if (execute_cmd(cmd, pid_str, sizeof(pid_str)) != 0 ||
-        strlen(pid_str) == 0) {
-        return port_buf;
-    }
+    if (execute_cmd(cmd, pid_str, sizeof(pid_str)) == 0 && strlen(pid_str) > 0) {
+        long pid = atol(pid_str);
+        if (pid > 0) {
+            char net_out[MAX_LINE * 10] = {0};
 
-    long pid = atol(pid_str);
-    if (pid <= 0) return port_buf;
+            // netstat zuerst
+            snprintf(cmd, sizeof(cmd),
+                     "netstat -tulnp 2>/dev/null | grep ' %ld/'",
+                     pid);
+            execute_cmd(cmd, net_out, sizeof(net_out));
 
-    char net_out[MAX_LINE * 10] = {0};
-
-    // netstat -tulnp | grep " PID/"
-    snprintf(cmd, sizeof(cmd),
-             "netstat -tulnp 2>/dev/null | grep ' %ld/'",
-             pid);
-    execute_cmd(cmd, net_out, sizeof(net_out));
-
-    // Wenn netstat nichts liefert, noch ss versuchen
-    if (strlen(net_out) == 0) {
-        snprintf(cmd, sizeof(cmd),
-                 "ss -tulnp 2>/dev/null | grep 'pid=%ld,'",
-                 pid);
-        execute_cmd(cmd, net_out, sizeof(net_out));
-    }
-
-    if (strlen(net_out) > 0) {
-        // letzes ":" gefolgt von Ziffern als Port nehmen
-        char *scan = net_out;
-        char *last_port_start = NULL;
-
-        while ((scan = strchr(scan, ':')) != NULL) {
-            if (isdigit((unsigned char)scan[1])) {
-                last_port_start = scan + 1;
+            // Wenn netstat nichts bringt, ss probieren
+            if (strlen(net_out) == 0) {
+                snprintf(cmd, sizeof(cmd),
+                         "ss -tulnp 2>/dev/null | grep 'pid=%ld,'",
+                         pid);
+                execute_cmd(cmd, net_out, sizeof(net_out));
             }
-            scan++;
-        }
 
-        if (last_port_start) {
-            char *end = last_port_start;
-            while (isdigit((unsigned char)*end)) end++;
-            int len = end - last_port_start;
-            if (len > 0 && len < 6) {
-                strncpy(port_buf, last_port_start, len);
-                port_buf[len] = '\0';
-                return port_buf;
+            if (strlen(net_out) > 0) {
+                // letztes ':' gefolgt von Ziffern als Port
+                char *scan = net_out;
+                char *last_port_start = NULL;
+
+                while ((scan = strchr(scan, ':')) != NULL) {
+                    if (isdigit((unsigned char)scan[1])) {
+                        last_port_start = scan + 1;
+                    }
+                    scan++;
+                }
+
+                if (last_port_start) {
+                    char *end = last_port_start;
+                    while (isdigit((unsigned char)*end)) end++;
+                    int len = end - last_port_start;
+                    if (len > 0 && len < 6) {
+                        // HIER überschreiben wir ggf. den statischen Guess
+                        strncpy(port_buf, last_port_start, len);
+                        port_buf[len] = '\0';
+                    }
+                }
             }
         }
     }

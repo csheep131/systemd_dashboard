@@ -160,7 +160,10 @@ void render_dashboard_ui(void) {
 void get_input(char *buf, size_t buflen) {
     if (!buf || buflen == 0) return;
 
-    werase(status_win);
+    // Nur Zeile 1 der Statuszeile benutzen, Zeile 0 mit Aktionen bleibt stehen
+    wmove(status_win, 1, 0);
+    wclrtoeol(status_win);
+
     wattron(status_win, COLOR_PAIR(5));
     mvwprintw(status_win, 1, 0, "Eingabe: ");
     wattroff(status_win, COLOR_PAIR(5));
@@ -169,14 +172,13 @@ void get_input(char *buf, size_t buflen) {
     echo();
     wgetnstr(status_win, buf, (int)buflen - 1);
     noecho();
-
-    // Kein expliziter NL in wgetnstr, aber zur Sicherheit terminieren:
     buf[buflen - 1] = '\0';
 
-    werase(status_win);
+    // Eingabezeile wieder leeren, Aktionszeile bleibt oben stehen
+    wmove(status_win, 1, 0);
+    wclrtoeol(status_win);
     wrefresh(status_win);
 }
-
 // ---------------------------------------------------------
 // Favorit hinzufügen (ncurses)
 // ---------------------------------------------------------
