@@ -68,6 +68,54 @@ void show_dependencies(const char *svc, const char *scope) {
     refresh();
 }
 
+// Neu: Unit-File bearbeiten (in utils.c, wie gewünscht)
+void edit_unit_file(const char *svc, const char *scope) {
+    if (!svc || strcmp(svc, "") == 0) {
+        printf("%sKein gültiger Service-Name.%s\n", ERR_COLOR, RESET_COLOR);
+        press_enter();
+        return;
+    }
+
+    const char *user_flag = (strcmp(scope, "system") == 0 ? "" : "--user");
+    char fragment_path[MAX_LINE] = {0};
+    char cmd[MAX_LINE];
+
+    // Pfad zur Unit-File holen
+    snprintf(cmd, sizeof(cmd),
+             "systemctl %s show -p FragmentPath --value \"%s\" 2>/dev/null",
+             user_flag, svc);
+    if (execute_cmd(cmd, fragment_path, sizeof(fragment_path)) != 0 || strlen(fragment_path) == 0) {
+        printf("%sUnit-File-Pfad nicht gefunden für %s.%s\n", ERR_COLOR, svc, RESET_COLOR);
+        press_enter();
+        return;
+    }
+
+    // Ncurses pausieren
+    def_prog_mode();
+    endwin();
+
+    printf("%sÖffne Unit-File: %s%s\n", HEADER_COLOR, fragment_path, RESET_COLOR);
+    printf("%sBearbeite mit nano (oder vi als Fallback). Speichere und schließe den Editor.%s\n", WARN_COLOR, RESET_COLOR);
+
+    // Editor öffnen (nano bevorzugt, fallback vi)
+    char editor_cmd[512];
+    snprintf(editor_cmd, sizeof(editor_cmd), "if command -v nano >/dev/null 2>&1; then nano \"%s\"; else vi \"%s\"; fi", fragment_path, fragment_path);
+    int ret = system(editor_cmd);
+
+    if (ret != 0) {
+        printf("%sFehler beim Öffnen des Editors. Stelle sicher, dass nano oder vi installiert ist.%s\n", ERR_COLOR, RESET_COLOR);
+    } else {
+        printf("%sUnit-File gespeichert. Nach dem Edit: systemctl daemon-reload empfohlen.%s\n", OK_COLOR, RESET_COLOR);
+    }
+
+    printf("\n%sDrücke Enter für Zurück...%s", DIM_COLOR, RESET_COLOR);
+    press_enter();
+
+    // Ncurses wiederherstellen
+    reset_prog_mode();
+    refresh();
+}
+
 void press_enter(void) {
     char dummy[8];
     fgets(dummy, sizeof(dummy), stdin);

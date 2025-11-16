@@ -29,6 +29,10 @@ const char *DEFAULT_SERVICES[DEFAULT_SERVICES_COUNT] = {
 
 const char *sudo_flag = "";
 
+// Cache-Variablen (jetzt global, nicht static)
+char summary_cache[MAX_SERVICES][MAX_LINE] = {0};  // Einfacher Cache
+int  cache_valid[MAX_SERVICES] = {0};
+
 // --------------------------------------------------
 // Helper
 // --------------------------------------------------
@@ -257,9 +261,6 @@ char *guess_port(const char *svc, const char *scope) {
 // --------------------------------------------------
 // Service-Summary (Performance: Statischer Cache-Buffer für wiederholte Aufrufe)
 // --------------------------------------------------
-static char summary_cache[MAX_SERVICES][MAX_LINE] = {0};  // Einfacher Cache
-static int cache_valid[MAX_SERVICES] = {0};
-
 void get_service_summary(const char *svc, char *summary, size_t bufsize) {
     // Cache-Check (einfach: Index über String-Hash, aber für Einfachheit: Linear-Suche)
     for (int i = 0; i < num_my_services; i++) {
@@ -364,7 +365,7 @@ static void print_header(const char *title) {
     system("clear");
     printf("%s=====================================================%s\n",
            HEADER_COLOR, RESET_COLOR);
-    printf("%s        Systemd Dashboard – Eigene Services          %s\n",
+    printf("%s        Systemd Dashboard Eigene  Services          %s\n",
            HEADER_COLOR, RESET_COLOR);
     printf("%s=====================================================%s\n",
            HEADER_COLOR, RESET_COLOR);

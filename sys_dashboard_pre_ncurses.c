@@ -523,7 +523,7 @@ void build_all_services_list(const char *home) {
 }
 
 void render_all_services(void) {
-    print_header("Alle Services – System + User");
+    print_header("Alle Services System + User");
 
     if (num_all_services == 0) {
         printf("%sKeine Services gefunden.%s\n", ERR_COLOR, RESET_COLOR);
@@ -630,7 +630,7 @@ void service_detail_page(const char *svc) {
             printf("\n");
         }
 
-        printf("%sÜbersicht%s\n", HEADER_COLOR, RESET_COLOR);
+        printf("%sUebersicht%s\n", HEADER_COLOR, RESET_COLOR);
         printf("  Name:        %s\n", svc);
         printf("  Scope:       %s\n", scope_label);
         printf("  Active:      %s\n", active_c);

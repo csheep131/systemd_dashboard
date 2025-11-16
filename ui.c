@@ -22,6 +22,9 @@ extern int  num_my_services;
 extern char all_services[MAX_SERVICES][MAX_LINE];
 extern int  num_all_services;
 extern const char *sudo_flag;
+// Cache-Variablen aus sys_dashboard.c
+extern char summary_cache[MAX_SERVICES][MAX_LINE];
+extern int  cache_valid[MAX_SERVICES];
 
 // Funktionen aus sys_dashboard.c
 extern void get_service_summary(const char *svc, char *summary, size_t bufsize);
@@ -68,8 +71,8 @@ void init_ui(void) {
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
-    nodelay(stdscr, TRUE);  // Nicht-blockierender Input für bessere Performance
-    halfdelay(1);  // 0.1s Delay für Input-Check (anpassen bei Bedarf)
+    // nodelay(stdscr, TRUE);  // Optional: Für non-blocking, aber kann flackern – auskommentiert
+    // halfdelay(1);           // Optional: 0.1s Delay – auskommentiert für Stabilität
 
     int rows = LINES;
     int cols = COLS;
@@ -82,6 +85,10 @@ void init_ui(void) {
     keypad(status_win, TRUE);
 
     wrefresh(main_win);
+    nodelay(stdscr, TRUE); 
+    halfdelay(1);
+
+
     wrefresh(status_win);
 }
 
@@ -153,7 +160,7 @@ void render_dashboard_ui(int selected_idx, int focus_on_list) {
     // Header
     wattron(main_win, COLOR_PAIR(1) | A_BOLD);
     mvwprintw(main_win, y++, 0, "=====================================================");
-    mvwprintw(main_win, y++, 0, "        Systemd Dashboard – Eigene Services          ");
+    mvwprintw(main_win, y++, 0, "        Systemd Dashboard  Eigene Services          ");
     mvwprintw(main_win, y++, 0, "=====================================================");
     wattroff(main_win, COLOR_PAIR(1) | A_BOLD);
     y++;
@@ -299,7 +306,7 @@ void browse_all_services_ui(const char *home) {
 
         wattron(main_win, COLOR_PAIR(1) | A_BOLD);
         mvwprintw(main_win, y++, 0, "=====================================================");
-        mvwprintw(main_win, y++, 0, "        Alle Services – System + User                ");
+        mvwprintw(main_win, y++, 0, "        Alle Services System + User                ");
         mvwprintw(main_win, y++, 0, "=====================================================");
         wattroff(main_win, COLOR_PAIR(1) | A_BOLD);
         y++;
@@ -528,7 +535,7 @@ void service_detail_page_ui(const char *svc) {
 
         // Übersicht
         wattron(main_win, COLOR_PAIR(1));
-        mvwprintw(main_win, y++, 0, "Übersicht");
+        mvwprintw(main_win, y++, 0, "Uebersicht");
         wattroff(main_win, COLOR_PAIR(1));
 
         mvwprintw(main_win, y++, 0, "  Name:        %s", svc);
@@ -626,7 +633,7 @@ void service_detail_page_ui(const char *svc) {
         werase(status_win);
         wattron(status_win, COLOR_PAIR(5));
         mvwprintw(status_win, 0, 0,
-                  "s Start | t Stop | r Restart | e Enable | d Disable | S Status | I Show | L Live-Logs | o Browser | c CPU/RAM | D Deps | q Zurück");
+                  "s Start | t Stop | r Restart | e Enable | d Disable | S Status | I Show | L Live-Logs | o Browser | c CPU/RAM | D Deps | V Edit Unit | q Zurück");
         wattroff(status_win, COLOR_PAIR(5));
         wrefresh(status_win);
 
@@ -680,11 +687,11 @@ void service_detail_page_ui(const char *svc) {
         } else if (ch == 'L') {
             def_prog_mode();
             endwin();
+            // Neu: Pipe durch less für 'q'-Support
             snprintf(cmd, sizeof(cmd),
-                     "journalctl %s -u \"%s\" -f",
+                     "journalctl %s -u \"%s\" -f | less",
                      user_flag, svc);
             system(cmd);
-            printf("\n%s[Drücke q oder Ctrl+C zum Beenden]%s\n", WARN_COLOR, RESET_COLOR);
             reset_prog_mode();
             refresh();
         } else if (ch == 'o' || ch == 'O') {
@@ -715,6 +722,20 @@ void service_detail_page_ui(const char *svc) {
             }
         } else if (ch == 'D') {
             show_dependencies(svc, scope_str);
+        } else if (ch == 'V') {  // Neu: Edit Unit-File
+            if (strcmp(scope_str, "none") == 0) {
+                show_message_ui("Service nicht gefunden – keine Unit-File zum Editieren.");
+            } else {
+                edit_unit_file(svc, scope_str);
+                // Cache invalidieren nach Edit (da Unit geändert)
+                extern int cache_valid[MAX_SERVICES];  // Aus sys_dashboard.c
+                for (int i = 0; i < num_my_services; i++) {
+                    if (strcmp(my_services[i], svc) == 0) {
+                        cache_valid[i] = 0;
+                        break;
+                    }
+                }
+            }
         }
     }
 }
