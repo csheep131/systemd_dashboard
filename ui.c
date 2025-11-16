@@ -6,7 +6,10 @@
 
 #include "ui.h"
 #include "utils.h"
+#include "sys_dashboard.h"
+
 int execute_cmd(const char *cmd, char *output, size_t max_output);
+
 // Diese Werte müssen mit sys_dashboard.c übereinstimmen
 #define MAX_SERVICES 1000
 #define MAX_LINE     1024
@@ -65,6 +68,8 @@ void init_ui(void) {
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
+    nodelay(stdscr, TRUE);  // Nicht-blockierender Input für bessere Performance
+    halfdelay(1);  // 0.1s Delay für Input-Check (anpassen bei Bedarf)
 
     int rows = LINES;
     int cols = COLS;
@@ -179,7 +184,7 @@ void render_dashboard_ui(int selected_idx, int focus_on_list) {
         mvwhline(main_win, y++, 0, '-', maxx);
         wattroff(main_win, COLOR_PAIR(5) | A_BOLD);
 
-        // Einträge
+        // Einträge (Performance: Summary nur einmal parsen)
         for (int i = 0; i < num_my_services && y < maxy - 1; i++) {
             const char *svc = my_services[i];
             char summary[MAX_LINE];
@@ -257,7 +262,7 @@ void render_dashboard_ui(int selected_idx, int focus_on_list) {
     werase(status_win);
     wattron(status_win, COLOR_PAIR(5));
     mvwprintw(status_win, 0, 0,
-              "Pfeile/jk: Auswahl | Enter: Details | o: Browser | a: Add | r: Remove | R: Reload | B: Browse All | Tab: Fokus | q: Quit");
+              "Pfeile/jk: Auswahl | Enter: Details | o: Browser | a: Add | x: Remove | R: Reload | B: Browse All | Tab: Fokus | r: Restart | q: Quit");
     wattroff(status_win, COLOR_PAIR(5));
     wrefresh(status_win);
 }
@@ -301,7 +306,7 @@ void browse_all_services_ui(const char *home) {
 
         wattron(main_win, COLOR_PAIR(5));
         mvwprintw(main_win, y++, 0,
-                  "Suche: [%s]  (/ zum Editieren, Pfeile/jk, Enter=Details, a=Fav, o=Browser, b=Zurück)", filter);
+                  "Suche: [%s]  (/ zum Editieren, Pfeile/jk, Enter=Details, a=Fav, o=Browser, q=Zurück)", filter);
         wattroff(main_win, COLOR_PAIR(5));
         y++;
 
@@ -396,13 +401,13 @@ void browse_all_services_ui(const char *home) {
         werase(status_win);
         wattron(status_win, COLOR_PAIR(5));
         mvwprintw(status_win, 0, 0,
-                  "Browse All: Pfeile/jk=Navigate | Enter=Details | / Filter | a=Favorit | o=Browser | b/Esc=Zurück");
+                  "Browse All: Pfeile/jk=Navigate | Enter=Details | / Filter | a=Favorit | o=Browser | q= Zurück");
         wattroff(status_win, COLOR_PAIR(5));
         wrefresh(status_win);
 
         int ch = wgetch(main_win);
 
-        if (ch == 'b' || ch == 'B' || ch == 27) {
+        if (ch == 'q' || ch == 'Q' || ch == 27) {
             break;
         } else if ((ch == KEY_UP || ch == 'k') && filtered_count > 0) {
             if (selected > 0) selected--;
@@ -438,8 +443,7 @@ void browse_all_services_ui(const char *home) {
             }
         } else if ((ch == 'a' || ch == 'A') && filtered_count > 0) {
             const char *svc = all_services[filtered_idx[selected]];
-
-            // Prüfen, ob schon in Favoriten
+            // Check if already exists in favorites
             int exists = 0;
             for (int i = 0; i < num_my_services; i++) {
                 if (strcmp(my_services[i], svc) == 0) {
@@ -622,13 +626,13 @@ void service_detail_page_ui(const char *svc) {
         werase(status_win);
         wattron(status_win, COLOR_PAIR(5));
         mvwprintw(status_win, 0, 0,
-                  "s Start | t Stop | r Restart | e Enable | d Disable | S Status | I Show | L Live-Logs | o Browser | c CPU/RAM | D Deps | b Zurück");
+                  "s Start | t Stop | r Restart | e Enable | d Disable | S Status | I Show | L Live-Logs | o Browser | c CPU/RAM | D Deps | q Zurück");
         wattroff(status_win, COLOR_PAIR(5));
         wrefresh(status_win);
 
         int ch = wgetch(status_win);
 
-        if (ch == 'b' || ch == 'B' || ch == 27) {
+        if (ch == 'q' || ch == 'Q' || ch == 27) {
             break;
         } else if (ch == 's') {
             snprintf(cmd, sizeof(cmd), "%ssystemctl %s start \"%s\"",
@@ -680,6 +684,7 @@ void service_detail_page_ui(const char *svc) {
                      "journalctl %s -u \"%s\" -f",
                      user_flag, svc);
             system(cmd);
+            printf("\n%s[Drücke q oder Ctrl+C zum Beenden]%s\n", WARN_COLOR, RESET_COLOR);
             reset_prog_mode();
             refresh();
         } else if (ch == 'o' || ch == 'O') {

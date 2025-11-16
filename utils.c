@@ -67,3 +67,8 @@ void show_dependencies(const char *svc, const char *scope) {
     reset_prog_mode();
     refresh();
 }
+
+void press_enter(void) {
+    char dummy[8];
+    fgets(dummy, sizeof(dummy), stdin);
+}

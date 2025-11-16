@@ -74,12 +74,6 @@ void check_systemctl(void) {
     }
 }
 
-void press_enter(void) {
-    printf("\n%sWeiter mit [Enter]...%s\n", DIM_COLOR, RESET_COLOR);
-    char dummy[8];
-    fgets(dummy, sizeof(dummy), stdin);
-}
-
 // --------------------------------------------------
 // Config Laden/Speichern
 // --------------------------------------------------
@@ -261,10 +255,21 @@ char *guess_port(const char *svc, const char *scope) {
 
 
 // --------------------------------------------------
-// Service-Summary
+// Service-Summary (Performance: Statischer Cache-Buffer für wiederholte Aufrufe)
 // --------------------------------------------------
+static char summary_cache[MAX_SERVICES][MAX_LINE] = {0};  // Einfacher Cache
+static int cache_valid[MAX_SERVICES] = {0};
 
 void get_service_summary(const char *svc, char *summary, size_t bufsize) {
+    // Cache-Check (einfach: Index über String-Hash, aber für Einfachheit: Linear-Suche)
+    for (int i = 0; i < num_my_services; i++) {
+        if (strcmp(my_services[i], svc) == 0 && cache_valid[i]) {
+            strncpy(summary, summary_cache[i], bufsize - 1);
+            summary[bufsize - 1] = '\0';
+            return;
+        }
+    }
+
     char scope_str[16];
     strcpy(scope_str, detect_scope(svc));
     char active[32] = {0}, enabled[32] = {0}, desc[MAX_DESC] = {0}, port[16] = {0};
@@ -295,6 +300,16 @@ void get_service_summary(const char *svc, char *summary, size_t bufsize) {
 
     snprintf(summary, bufsize, "%s|%s|%s|%s|%s",
              scope_str, active, enabled, desc, port);
+
+    // Cache speichern
+    for (int i = 0; i < num_my_services; i++) {
+        if (strcmp(my_services[i], svc) == 0) {
+            strncpy(summary_cache[i], summary, MAX_LINE - 1);
+            summary_cache[i][MAX_LINE - 1] = '\0';
+            cache_valid[i] = 1;
+            break;
+        }
+    }
 }
 
 // --------------------------------------------------
@@ -452,6 +467,7 @@ void remove_service_interactive(const char *home) {
     printf("%sService entfernt:%s %s\n", OK_COLOR, RESET_COLOR, removed);
     press_enter();
 }
+
 void main_loop(const char *home) {
     init_ui();
 
@@ -472,7 +488,7 @@ void main_loop(const char *home) {
         // Taste lesen NACHDEM die UI gezeichnet wurde
         int ch = getch();
 
-        // Beenden
+        // Beenden (nur auf Hauptseite)
         if (ch == 'q' || ch == 'Q') {
             end_ui();
             printf("\n%sBye%s\n", DIM_COLOR, RESET_COLOR);
@@ -499,17 +515,37 @@ void main_loop(const char *home) {
         else if (ch == 'a' || ch == 'A') {
             add_service_ui(home);
         }
-        // r → Service entfernen
-        else if (ch == 'r') {
+        // x → Service entfernen (geändert von r)
+        else if (ch == 'x' || ch == 'X') {
             remove_service_ui(home);
         }
         // R → Config neu laden
         else if (ch == 'R') {
             load_services(home);
+            // Cache invalidieren
+            memset(cache_valid, 0, sizeof(cache_valid));
         }
         // B → Alle Services browsen
         else if (ch == 'B' || ch == 'b') {
             browse_all_services_ui(home);
+        }
+        // r → Restart selected Service (neu auf Dashboard)
+        else if ((ch == 'r' || ch == 'R') && focus_on_list && num_my_services > 0) {
+            const char *svc = my_services[selected];
+            char *scope = detect_scope(svc);
+            const char *user_flag = (strcmp(scope, "system") == 0 ? "" : "--user");
+            char cmd[MAX_LINE];
+            snprintf(cmd, sizeof(cmd), "%ssystemctl %s restart \"%s\"",
+                     sudo_flag, user_flag, svc);
+            system(cmd);
+            show_message_ui("Service neugestartet");
+            // Cache invalidieren für diesen Service
+            for (int i = 0; i < num_my_services; i++) {
+                if (strcmp(my_services[i], svc) == 0) {
+                    cache_valid[i] = 0;
+                    break;
+                }
+            }
         }
         // o → Browser direkt aus Dashboard
         else if (ch == 'o' || ch == 'O') {
@@ -548,7 +584,6 @@ int main(void) {
     }
 
     load_services(home);
-    init_ui();
     main_loop(home);
     end_ui();
 
