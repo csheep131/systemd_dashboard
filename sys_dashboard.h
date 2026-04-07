@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <time.h>
 
 #define MAX_SERVICES        1000
 #define MAX_LINE            1024
@@ -20,6 +22,11 @@ extern const char *sudo_flag;
 // Cache-Variablen (für Performance, global sichtbar)
 extern char summary_cache[MAX_SERVICES][MAX_LINE];
 extern int  cache_valid[MAX_SERVICES];
+extern time_t cache_timestamp[MAX_SERVICES];
+
+// Resize signal
+extern volatile sig_atomic_t need_resize;
+void resize_handler(int sig);
 
 void init_sudo_flag(void);
 int execute_cmd(const char *cmd, char *output, size_t max_output);
@@ -34,6 +41,7 @@ void build_all_services_list(const char *home);
 void add_service_interactive(const char *home);
 void remove_service_interactive(const char *home);
 void main_loop(const char *home);
-
+void invalidate_cache(void);
+void invalidate_service_cache(const char *svc);
 
 #endif
